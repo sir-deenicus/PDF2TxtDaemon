@@ -1,11 +1,14 @@
-import java.io.{File, PrintStream}
+import java.io.{RandomAccessFile, File, PrintStream}
+import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.nio.file._
 import java.util
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import org.apache.pdfbox.multipdf.Splitter
 import org.apache.pdfbox.pdmodel.PDDocument
-import org.apache.pdfbox.util.{Splitter, PDFTextStripper}
+import org.apache.pdfbox.text.PDFTextStripper
+
 import scala.collection.JavaConversions._
 
 object PDFtxtDaemon {
@@ -18,23 +21,24 @@ object PDFtxtDaemon {
 		val stripperg = new PDFTextStripper()
 
 		if (args.length > 0) {
-			args.par.foreach((a) => {
+			args.par.foreach((filename) => {
 
-				val pagemaker = new ObjectMapper();
+				val pagemaker = new ObjectMapper()
 				val stripper = new PDFTextStripper()
 				val splitter = new Splitter()
 
-				val newpath = a.replace(".pdf", ".txt")
-				println(c + "/" + count + " " + a)
+				val newpath = filename.replace(".pdf", ".txt")
+				println(c + "/" + count + " " + filename)
 				c += 1
 				println("  => " + newpath)
-				Files.write(Paths.get(log), (a + ", " + ((System.currentTimeMillis() - start) / (1000.0 * 60.0))).getBytes)
+				Files.write(Paths.get(log), (filename + ", " + ((System.currentTimeMillis() - start) / (1000.0 * 60.0))).getBytes)
 
 				val x0 = System.currentTimeMillis()
 				var doc = new PDDocument()
 
 				try {
-					doc = PDDocument.load(a)
+
+					doc = PDDocument.load(new File(filename))
 					splitter.setSplitAtPage(1)
 
 					val pages = new util.ArrayList(splitter.split(doc).map(p => stripper.getText(p)))
@@ -53,33 +57,50 @@ object PDFtxtDaemon {
 				}
 				catch {
 					case e: Throwable =>
-						Files.write(Paths.get(a + ".error"), e.getMessage.getBytes(StandardCharsets.UTF_8))
+						Files.write(Paths.get(filename + ".error"), e.getMessage.getBytes(StandardCharsets.UTF_8))
 				} finally {
 					if (doc != null) doc.close()
 				}
 			})
 		}
 		else {
+			var pipebox: Option[RandomAccessFile] = None
+
 			var die = false
 			while (!die) {
-				val inp = scala.io.StdIn.readLine()
-				if (inp == "DIE") die = true
-				else {
-					try {
-						val doc = PDDocument.load(inp)
-						val txt = stripperg.getText(doc)
-						doc.close()
+				pipebox match {
+					case None =>
+						try {
+							val pipe = new RandomAccessFile("\\\\.\\pipe\\pdfDaemon-commpipe", "rw")
+							pipebox = Some(pipe)
+						}
+						catch {case _ => ()}
+					case Some(pipe) =>
+						val inp = pipe.readInt()
 
-						System.setOut(new PrintStream(System.out, true, "UTF-8"))
-						println(txt)
-					}
-					catch {
-						case e: Throwable =>
-							println("ERROR LOADING PDF")
-					}
+						if (inp == 12) die = true
+						else {
+							try {
+								val fsize = pipe.readInt()
+								val fileBytes = new Array[Byte](fsize)
+								val len = pipe.read(fileBytes)
+
+								val doc = PDDocument.load(fileBytes)
+								val txt = stripperg.getText(doc)
+								doc.close()
+
+								val txtbytes = txt.getBytes(StandardCharsets.UTF_8)
+								val plen = ByteBuffer.allocate(4).putInt(txtbytes.length).array()
+								pipe.write(plen)
+								pipe.write(txtbytes)
+							}
+							catch {
+								case e: Throwable =>
+									println(e.getMessage())
+							}
+						}
 				}
 			}
 		}
 	}
 }
-
