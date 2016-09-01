@@ -12,5 +12,6 @@
     <orderEntry type="library" name="jackson-core-2.5.0" level="project" />
     <orderEntry type="library" name="jackson-databind-2.5.0" level="project" />
     <orderEntry type="library" name="org.apache.pdfbox:pdfbox:2.0.0-RC2" level="project" />
+    <orderEntry type="library" name="org.bouncycastle:bcmail-jdk15on:1.54" level="project" />
   </component>
 </module>
