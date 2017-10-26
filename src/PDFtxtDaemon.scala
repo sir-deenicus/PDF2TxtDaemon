@@ -41,27 +41,29 @@ object PDFtxtDaemon {
 						val metafilename = Paths.get(filename,"pdfs.metadata.json")
 
 						val metadata =
-							if(new File(metafilename.toString).exists()) {
-								val metasfile = Files.readAllBytes(metafilename)
+							   if(new File(metafilename.toString).exists()) {
+									val metasfile = Files.readAllBytes(metafilename)
 
-								pagemaker.readValue(new String(metasfile, "UTF-8"), classOf[util.HashMap[String, PDFMetaInfo]])
-							}
-						  else {
-								new util.HashMap[String, PDFMetaInfo]()
-							}
+									pagemaker.readValue(new String(metasfile, "UTF-8"), classOf[util.HashMap[String, PDFMetaInfo]])
+							   }
+							   else {
+								   new util.HashMap[String, PDFMetaInfo]()
+							   }
 
 						val files = fname.listFiles().filter(f => f.getName.toLowerCase().takeRight(4) == ".pdf")
+						val metas =
+								files.par.map(f => {
+									counter+= 1
+									processfile(start, counter, files.length, log, f, isdir = true)
+									//processMetaInfo(counter, f)
+								})
 
-						files.foreach(f => {
-							counter+= 1
-							processfile(start, counter, files.length, log, f, isdir = true, Some(metadata))
-							//processMetaInfo(counter, f, metadata)
-						})
+						metas.filter(_.isDefined).foreach({case Some((filepath,m)) => metadata.put(filepath,m)})
 						Files.write(metafilename, pagemaker.writeValueAsString(metadata).getBytes(StandardCharsets.UTF_8))
 					}
 					else {
 						counter += 1
-						processfile(start, counter, argcount, log, fname, isdir = false, None)
+						processfile(start, counter, argcount, log, fname, isdir = false)
 					}
 			})
 		}
@@ -75,8 +77,9 @@ object PDFtxtDaemon {
 	}
 
 
-	def processMetaInfo (count : Int, filepath: File,meta:util.HashMap[String,PDFMetaInfo]): Unit ={
+	def processMetaInfo (count : Int, filepath: File): Option[(String,PDFMetaInfo)] = {
 		var doc = new PDDocument()
+		var metainf : Option[(String,PDFMetaInfo)] = None
 		try {
 			doc = PDDocument.load(filepath)
 			val docinfo = doc.getDocumentInformation
@@ -94,7 +97,7 @@ object PDFtxtDaemon {
 			println(metainfo.Subject)
 			println("")
 
-			meta.put(filepath.getName, metainfo)
+			metainf = Some((filepath.getName, metainfo))
 		}
 		catch {
 			case e: Throwable =>
@@ -102,13 +105,15 @@ object PDFtxtDaemon {
 		} finally {
 			if (doc != null) doc.close()
 		}
+		metainf
 	}
 
-	def processfile(start: Long, c: Int, count: Int, log: String, filepath: File, isdir : Boolean, metadata : Option[util.HashMap[String,PDFMetaInfo]]): Unit = {
+	def processfile(start: Long, c: Int, count: Int, log: String, filepath: File, isdir : Boolean): Option[(String,PDFMetaInfo)] = {
 		val dir = filepath.getParent
 
 		val newfileName = filepath.getName.replace(".pdf", ".txt")
 		val fname = if(isdir) Paths.get(dir,"PDFs-Text",newfileName) else Paths.get(filepath.toString.replace(".pdf", ".txt"))
+	  var metainf : Option[(String,PDFMetaInfo)] = None
 
 		if (!new File(fname.toString).exists()) {
 			val pagemaker = new ObjectMapper()
@@ -125,19 +130,15 @@ object PDFtxtDaemon {
 				doc = PDDocument.load(filepath)
 				splitter.setSplitAtPage(1)
 
-				metadata match {
-					case None => ()
-					case Some(meta) =>
-						val docinfo = doc.getDocumentInformation
+				val docinfo = doc.getDocumentInformation
 
-						val df = new SimpleDateFormat("yyyy/MM/dd")
-						val date = df.format(docinfo.getCreationDate.getTime)
+				val df = new SimpleDateFormat("yyyy/MM/dd")
+				val date = df.format(docinfo.getCreationDate.getTime)
 
-						val metainfo = new PDFMetaInfo(nullCheck(docinfo.getAuthor)  , nullCheck(docinfo.getTitle)  ,
-							                              nullCheck(docinfo.getKeywords), nullCheck(docinfo.getSubject), date)
+				val metainfo = new PDFMetaInfo(nullCheck(docinfo.getAuthor)  , nullCheck(docinfo.getTitle)  ,
+					                              nullCheck(docinfo.getKeywords), nullCheck(docinfo.getSubject), date)
 
-						meta.put(filepath.getName, metainfo)
-				}
+				metainf = Some((filepath.getName, metainfo))
 
 				val pages = new util.ArrayList(splitter.split(doc).map(p => stripper.getText(p)))
 
@@ -164,6 +165,7 @@ object PDFtxtDaemon {
 				if (doc != null) doc.close()
 			}
 		}
+		metainf
 	}
 
 	def openCommunicationChannel(): Unit ={
