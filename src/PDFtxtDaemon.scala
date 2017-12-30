@@ -52,13 +52,21 @@ object PDFtxtDaemon {
 
 						val files = fname.listFiles().filter(f => f.getName.toLowerCase().takeRight(4) == ".pdf")
 						val metas =
-								files.par.map(f => {
+								files.map(f => {
 									counter+= 1
 									processfile(start, counter, files.length, log, f, isdir = true)
 									//processMetaInfo(counter, f)
 								})
 
-						metas.filter(_.isDefined).foreach({case Some((filepath,m)) => metadata.put(filepath,m)})
+						metas.filter(_.isDefined).foreach({
+									case Some((filepath,m)) =>
+											  try {
+												  metadata.put(filepath,m)
+											  } catch {
+												  case e:Throwable => println("Error on " + filepath)
+											  }
+						})
+
 						Files.write(metafilename, pagemaker.writeValueAsString(metadata).getBytes(StandardCharsets.UTF_8))
 					}
 					else {
@@ -84,8 +92,6 @@ object PDFtxtDaemon {
 			doc = PDDocument.load(filepath)
 			val docinfo = doc.getDocumentInformation
 
-			docinfo.getKeywords
-
 			val df = new SimpleDateFormat("yyyy/MM/dd")
 			val date = df.format(docinfo.getCreationDate.getTime)
 			val title = if (docinfo.getTitle != null) docinfo.getTitle else ""
@@ -110,6 +116,7 @@ object PDFtxtDaemon {
 
 	def processfile(start: Long, c: Int, count: Int, log: String, filepath: File, isdir : Boolean): Option[(String,PDFMetaInfo)] = {
 		val dir = filepath.getParent
+		println("Starting on: " + filepath)
 
 		val newfileName = filepath.getName.replace(".pdf", ".txt")
 		val fname = if(isdir) Paths.get(dir,"PDFs-Text",newfileName) else Paths.get(filepath.toString.replace(".pdf", ".txt"))
@@ -140,7 +147,8 @@ object PDFtxtDaemon {
 
 				metainf = Some((filepath.getName, metainfo))
 
-				val pages = new util.ArrayList(splitter.split(doc).map(p => stripper.getText(p)))
+				val splitdoc = splitter.split(doc)
+				val pages = new util.ArrayList(splitdoc.map(p => stripper.getText(p)))
 
 				println("  => " + newfileName)
 
@@ -159,13 +167,23 @@ object PDFtxtDaemon {
 				doc.close()
 			}
 			catch {
-				case e: Throwable =>
-					Files.write(Paths.get(filepath + ".error"), e.getMessage.getBytes(StandardCharsets.UTF_8))
+				case error: Throwable => err(error,filepath)
+
 			} finally {
 				if (doc != null) doc.close()
 			}
 		}
 		metainf
+	}
+
+	def err(error:Throwable, filepath:File):Unit= {
+		val msg = error.getMessage
+		val m = if(msg==null) "unknown error" else msg
+
+		println(error)
+
+		val b = m.getBytes(StandardCharsets.UTF_8)
+		Files.write(Paths.get(filepath + ".error"), b)
 	}
 
 	def openCommunicationChannel(): Unit ={
